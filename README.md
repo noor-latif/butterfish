@@ -4,7 +4,29 @@ A shell with AI superpowers
 
 [![Website](https://img.shields.io/badge/website-https://butterfi.sh-blue)](https://butterfi.sh) [![GoDoc](https://godoc.org/github.com/bakks/butterfish?status.svg)](https://godoc.org/github.com/bakks/butterfish) [![Latest Version](https://img.shields.io/github/v/release/bakks/butterfish)](https://github.com/bakks/butterfish/releases) [![@pbbakkum](https://img.shields.io/badge/Updates%20at-%20%40pbbakkum-blue?style=flat&logo=twitter)](https://twitter.com/pbbakkum)
 
+---
+
 #### ** New **
+Now with Vercel AI SDK integrated! Enter your AI Gateway API key in [.env.local](.env.local)
+
+The AI Gateway provider connects you to models from multiple AI providers through a single interface. Instead of integrating with each provider separately, you can access OpenAI, Anthropic, Google, Meta, xAI, and other providers and their models.
+- OpenAI (e.g., GPT-5 series)
+- Anthropic (Claude models)
+- Google Gemini models
+- xAI Grok models
+- Amazon Bedrock
+- Cohere
+- DeepSeek
+- Mistral
+- Groq
+- Perplexity
+- Meta
+- Alibaba (e.g., Qwen)
+Others accessible via community providers or custom setups
+
+Get $5 credits free by adding a credit card here -> https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card
+
+---
 
 There's now a [Butterfish Neovim plugin](https://github.com/bakks/butterfish.nvim)!
 

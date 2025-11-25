@@ -43,10 +43,21 @@ type ButterfishConfig struct {
 	// build variables
 	BuildInfo string
 
+	// Provider selection: "openai", "anthropic", or "google"
+	// Defaults to "openai" if not specified
+	Provider string
+
 	// OpenAI private token, should start with "sk-".
 	// Found at https://platform.openai.com/account/api-keys
 	OpenAIToken  string
-	BaseURL      string
+	BaseURL      string // Base URL for OpenAI (or compatible API)
+	
+	// Anthropic API key for Claude models
+	AnthropicToken string
+	
+	// Google API key for Gemini models
+	GoogleToken string
+	
 	TokenTimeout time.Duration // how long to wait for a token before timing out
 
 	// LLM API communication client that implements the LLM interface
@@ -439,16 +450,29 @@ func NewDiskPromptLibrary(path string, verbose bool, writer io.Writer) (*prompt.
 }
 
 func initLLM(config *ButterfishConfig) (LLM, error) {
-	if config.OpenAIToken == "" && config.LLMClient != nil {
-		return nil, errors.New("Must provide either an OpenAI Token or an LLM client.")
-	} else if config.OpenAIToken != "" && config.LLMClient != nil {
-		return nil, errors.New("Must provide either an OpenAI Token or an LLM client, not both.")
-	} else if config.OpenAIToken != "" {
-		gpt := NewGPT(config.OpenAIToken, config.BaseURL)
-		return gpt, nil
-	} else {
+	// If a custom LLM client is provided, use it
+	if config.LLMClient != nil {
+		// Validate that no provider tokens are set when using custom client
+		if config.OpenAIToken != "" || config.AnthropicToken != "" || config.GoogleToken != "" {
+			return nil, errors.New("cannot use custom LLM client with provider tokens")
+		}
 		return config.LLMClient, nil
 	}
+
+	// Validate provider configuration
+	if err := ValidateProviderConfig(config); err != nil {
+		return nil, err
+	}
+
+	// Create multi-provider LLM using aisdk-go
+	provider, err := NewMultiProviderLLM(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create provider client: %w", err)
+	}
+
+	// Create AISDKLLM adapter
+	llm := NewAISDKLLM(provider, config.Verbose > 0)
+	return llm, nil
 }
 
 func initPromptLibrary(config *ButterfishConfig) (PromptLibrary, error) {

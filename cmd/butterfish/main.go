@@ -39,6 +39,8 @@ If you do not have OpenAI free credits then you will need a subscription and you
 const license = "MIT License - Copyright (c) 2023 Peter Bakkum"
 const defaultEnvPath = "~/.config/butterfish/butterfish.env"
 const defaultPromptPath = "~/.config/butterfish/prompts.yaml"
+const defaultBaseURL = "https://api.openai.com/v1"
+const aiGatewayBaseURL = "https://ai-gateway.vercel.sh/v1"
 
 const shell_help = `Start the Butterfish shell wrapper. This wraps your existing shell, giving you access to LLM prompting by starting your command with a capital letter. LLM calls include prior shell context. This is great for keeping a chat-like terminal open, sending written prompts, debugging commands, and iterating on past actions.
 
@@ -83,7 +85,7 @@ type CliConfig struct {
 		Bin                       string `short:"b" help:"Shell to use (e.g. /bin/zsh), defaults to $SHELL."`
 		Model                     string `short:"m" default:"gpt-4o" help:"Model for when the user manually enters a prompt."`
 		AutosuggestDisabled       bool   `short:"A" default:"false" help:"Disable autosuggest."`
-		AutosuggestModel          string `short:"a" default:"gpt-3.5-turbo-instruct" help:"Model for autosuggest"`
+		AutosuggestModel          string `short:"a" default:"gpt-4o-mini" help:"Model for autosuggest"`
 		AutosuggestTimeout        int    `short:"t" default:"500" help:"Delay after typing before autosuggest (lower values trigger more calls and are more expensive). In milliseconds."`
 		NewlineAutosuggestTimeout int    `short:"T" default:"3500" help:"Timeout for autosuggest on a fresh line, i.e. before a command has started. Negative values disable. In milliseconds."`
 		NoCommandPrompt           bool   `short:"p" default:"false" help:"Don't change command prompt (shell PS1 variable). If not set, an emoji will be added to the prompt as a reminder you're in Shell Mode."`
@@ -97,68 +99,134 @@ type CliConfig struct {
 	bf.CliCommandConfig
 }
 
-func getOpenAIToken() string {
+func getProviderTokens() (openaiToken, anthropicToken, googleToken, provider string) {
 	path, err := homedir.Expand(defaultEnvPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// We attempt to get a token from env vars plus an env file
+	// We attempt to get tokens from env vars plus an env file
+	// Load .env.local first (higher priority), then the default env file
+	godotenv.Load(".env.local")
 	godotenv.Load(path)
 
-	token := os.Getenv("OPENAI_TOKEN")
-	if token != "" {
-		return token
+	// Get provider from env or default to openai
+	provider = os.Getenv("BUTTERFISH_PROVIDER")
+	if provider == "" {
+		provider = "openai" // default
 	}
 
-	token = os.Getenv("OPENAI_API_KEY")
-	if token != "" {
-		return token
+	// Get OpenAI token - check AI_GATEWAY_API_KEY first (for Vercel AI Gateway)
+	openaiToken = os.Getenv("AI_GATEWAY_API_KEY")
+	if openaiToken == "" {
+		openaiToken = os.Getenv("OPENAI_TOKEN")
+	}
+	if openaiToken == "" {
+		openaiToken = os.Getenv("OPENAI_API_KEY")
 	}
 
-	// If we don't have a token, we'll prompt the user to create one
-	fmt.Printf("Butterfish requires an OpenAI API key, please visit https://beta.openai.com/account/api-keys to create one and paste it below (it should start with sk-):\n")
+	// Get Anthropic token
+	anthropicToken = os.Getenv("ANTHROPIC_TOKEN")
+	if anthropicToken == "" {
+		anthropicToken = os.Getenv("ANTHROPIC_API_KEY")
+	}
 
-	// read in the token and validate
+	// Get Google token
+	googleToken = os.Getenv("GOOGLE_TOKEN")
+	if googleToken == "" {
+		googleToken = os.Getenv("GOOGLE_API_KEY")
+	}
+
+	// If no tokens found, prompt for the selected provider's token
+	if provider == "openai" && openaiToken == "" {
+		openaiToken = promptForToken("OpenAI", "https://platform.openai.com/account/api-keys", "sk-")
+		saveTokenToEnv(path, "OPENAI_TOKEN", openaiToken)
+	} else if provider == "anthropic" && anthropicToken == "" {
+		anthropicToken = promptForToken("Anthropic", "https://console.anthropic.com/settings/keys", "sk-ant-")
+		saveTokenToEnv(path, "ANTHROPIC_TOKEN", anthropicToken)
+	} else if provider == "google" && googleToken == "" {
+		googleToken = promptForToken("Google", "https://makersuite.google.com/app/apikey", "")
+		saveTokenToEnv(path, "GOOGLE_TOKEN", googleToken)
+	}
+
+	return openaiToken, anthropicToken, googleToken, provider
+}
+
+func promptForToken(providerName, url, prefix string) string {
+	fmt.Printf("Butterfish requires a %s API key, please visit %s to create one and paste it below", providerName, url)
+	if prefix != "" {
+		fmt.Printf(" (it should start with %s)", prefix)
+	}
+	fmt.Printf(":\n")
+
+	var token string
 	fmt.Scanln(&token)
 	token = strings.TrimSpace(token)
 	if token == "" {
 		log.Fatal("No token provided, exiting")
 	}
-	if !strings.HasPrefix(token, "sk-") {
-		log.Fatal("Invalid token provided, exiting")
+	if prefix != "" && !strings.HasPrefix(token, prefix) {
+		log.Fatalf("Invalid token provided (should start with %s), exiting", prefix)
 	}
+	return token
+}
 
-	// attempt to write a .env file
+func saveTokenToEnv(path, key, value string) {
 	fmt.Printf("\nSaving token to %s\n", path)
-	err = os.MkdirAll(filepath.Dir(path), 0755)
+	err := os.MkdirAll(filepath.Dir(path), 0755)
 	if err != nil {
 		fmt.Printf("Error creating directory: %s\n", err.Error())
-		return token
+		return
 	}
 
-	envFile, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
+	// Read existing env file to preserve other keys
+	existingContent := ""
+	if data, err := os.ReadFile(path); err == nil {
+		existingContent = string(data)
+	}
+
+	envFile, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		fmt.Printf("Error creating file: %s\n", err.Error())
-		return token
+		return
 	}
 	defer envFile.Close()
 
-	content := fmt.Sprintf("OPENAI_TOKEN=%s\n", token)
+	// Write existing content (excluding the key we're updating)
+	lines := strings.Split(existingContent, "\n")
+	for _, line := range lines {
+		if !strings.HasPrefix(line, key+"=") && strings.TrimSpace(line) != "" {
+			envFile.WriteString(line + "\n")
+		}
+	}
+
+	// Write new token
+	content := fmt.Sprintf("%s=%s\n", key, value)
 	_, err = envFile.WriteString(content)
 	if err != nil {
 		fmt.Printf("Error writing file: %s\n", err.Error())
 	}
 
 	fmt.Printf("Token saved, you can edit it at any time at %s\n\n", path)
-
-	return token
 }
 
 func makeButterfishConfig(options *CliConfig) *bf.ButterfishConfig {
 	config := bf.MakeButterfishConfig()
-	config.OpenAIToken = getOpenAIToken()
+	
+	// Get provider tokens and selected provider
+	openaiToken, anthropicToken, googleToken, provider := getProviderTokens()
+	config.Provider = provider
+	config.OpenAIToken = openaiToken
+	config.AnthropicToken = anthropicToken
+	config.GoogleToken = googleToken
 	config.BaseURL = options.BaseURL
+	if config.BaseURL == "" {
+		config.BaseURL = defaultBaseURL
+	}
+	if os.Getenv("AI_GATEWAY_API_KEY") != "" && config.BaseURL == defaultBaseURL {
+		config.BaseURL = aiGatewayBaseURL
+	}
+	
 	config.PromptLibraryPath = defaultPromptPath
 	config.TokenTimeout = time.Duration(options.TokenTimeout) * time.Millisecond
 
