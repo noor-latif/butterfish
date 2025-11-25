@@ -4,3 +4,4 @@
 butterfish.log
 .butterfish_index
 .DS_Store
+.env.local
