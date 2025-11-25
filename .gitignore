@@ -1,4 +1,6 @@
 .env
+.env.local
+.env.*
 butterfish.log
 .butterfish_index
 .DS_Store
